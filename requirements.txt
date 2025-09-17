@@ -1,7 +1,4 @@
-tensorflow
-keras
 Flask
-numpy
+tensorflow
 opencv-python-headless
-Pillow
-flask-cors
+numpy
