@@ -18,7 +18,6 @@
       align-items: center;
       min-height: 100vh;
       padding: 20px 10px;
-      /* Optional: remove perspective for simpler mobile rendering */
     }
 
     /* Header Styling */
@@ -46,7 +45,6 @@
       overflow: hidden;
       box-shadow: 0 10px 20px rgba(0,0,0,0.4), inset 0 0 10px rgba(255,255,255,0.2);
       margin-bottom: 15px;
-      /* Add a subtle animation to grab attention */
       transition: transform 0.3s ease;
     }
     
@@ -58,7 +56,6 @@
       width: 100%;
       height: 100%;
       object-fit: cover;
-      /* Optional: Minor visual effect on video feed */
       filter: brightness(1.05);
     }
     
@@ -116,7 +113,7 @@
       transform: scale(1.02);
     }
     
-    /* Responsive adjustment (though primarily mobile-focused) */
+    /* Responsive adjustment */
     @media (min-width: 600px) {
       h1 { font-size: 2.5rem; }
       p.description { font-size: 1rem; }
@@ -143,7 +140,6 @@
     const flipButton = document.getElementById('flip-button');
     let currentStream;
     let lastMessage = "";
-    let isFrontCamera = false; // Start with the back camera (ideal for scanning)
 
     // Function to stop the current video stream
     function stopStream() {
@@ -152,50 +148,79 @@
       }
     }
 
-    // Function to start the camera with a specific facing mode
-    async function startCamera(facingMode) {
+    // Function to start the camera, prioritizing the 'environment' (back) camera
+    async function startCamera(facingMode = 'environment') { // Default to 'environment'
       stopStream(); // Stop any existing stream first
       resultEl.textContent = "Loading camera...";
 
       try {
-        const stream = await navigator.mediaDevices.getUserMedia({ 
-          video: {
-            facingMode: facingMode
-          }
-        });
+        const constraints = {
+            video: {
+                // Try to enforce the preferred facing mode first
+                facingMode: { exact: facingMode }
+            }
+        };
+
+        const stream = await navigator.mediaDevices.getUserMedia(constraints);
         currentStream = stream;
         video.srcObject = stream;
         resultEl.textContent = "Waiting for prediction...";
+
       } catch (err) {
-        resultEl.textContent = "Error accessing camera: " + (err.name || err.message);
-        console.error("Camera access error:", err);
+        // If the exact mode fails (e.g., no back camera found, or permission issue)
+        console.warn(`Exact facingMode '${facingMode}' failed. Falling back to any available camera.`);
+        
+        if (facingMode === 'environment') {
+            // Try again with a less strict constraint (will usually be the front camera)
+            try {
+                const stream = await navigator.mediaDevices.getUserMedia({ video: true });
+                currentStream = stream;
+                video.srcObject = stream;
+                // Update the result message to inform the user it's the fallback
+                resultEl.textContent = "Waiting for prediction (Fallback Camera)...";
+            } catch (fallbackErr) {
+                resultEl.textContent = "Error accessing camera: " + (fallbackErr.name || fallbackErr.message);
+                console.error("Camera access error:", fallbackErr);
+            }
+        } else {
+             resultEl.textContent = "Error accessing camera: " + (err.name || err.message);
+             console.error("Camera access error:", err);
+        }
       }
     }
 
     // Flip camera handler
     flipButton.addEventListener('click', () => {
-      isFrontCamera = !isFrontCamera;
-      const newFacingMode = isFrontCamera ? 'user' : 'environment';
-      startCamera(newFacingMode);
+      if (!video.srcObject) return;
+      try {
+        // Get the current facing mode from the active track's settings
+        const currentFacingMode = video.srcObject.getVideoTracks()[0].getSettings().facingMode;
+        // Determine the new facing mode
+        const newFacingMode = currentFacingMode === 'environment' ? 'user' : 'environment';
+        startCamera(newFacingMode);
+      } catch (e) {
+        console.error("Error determining current camera mode:", e);
+        // Fallback to simple toggle if settings fail
+        startCamera(video.srcObject.getVideoTracks()[0].getSettings().facingMode === 'user' ? 'environment' : 'user');
+      }
     });
 
-    // Initial camera start (use 'environment' for back camera by default)
+    // Initial camera start: ALWAYS start with 'environment' (back camera)
     startCamera('environment');
 
 
     function captureAndPredict() {
-      if (!video.srcObject) return; // Don't try to capture if no stream
+      // Ensure the video is loaded and playing before attempting capture
+      if (!video.srcObject || video.videoWidth === 0 || video.videoHeight === 0) return; 
 
       const canvas = document.createElement('canvas');
-      // Use video's intrinsic dimensions for capture
       canvas.width = video.videoWidth; 
       canvas.height = video.videoHeight;
-      if (canvas.width === 0 || canvas.height === 0) return; // Wait for video to load
-
+      
       const ctx = canvas.getContext('2d');
       ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
 
-      // We might reduce the quality for faster transmission on mobile
+      // Reduce quality slightly for faster mobile transmission
       const imageData = canvas.toDataURL('image/jpeg', 0.8); 
 
       fetch('/predict', {
@@ -207,7 +232,7 @@
       .then(data => {
         if (data.error) {
           resultEl.textContent = "API Error: " + data.error;
-          resultEl.className = ""; // Clear classes
+          resultEl.className = "warning";
         } else {
           const label = data.label.replace("Background","").trim();
           const confidence = data.confidence;
